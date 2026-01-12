@@ -9,6 +9,7 @@ export interface Sandbox {
   ports: {
     shell: number;
     file: number;
+    browser: number;
   };
 }
 
@@ -48,5 +49,15 @@ export interface FileResult {
     size: number;
     modified: Date;
   }>;
+  error?: string;
+}
+
+/**
+ * Browser operation result
+ */
+export interface BrowserResult {
+  success: boolean;
+  data?: any;
+  screenshot?: string; // base64 encoded
   error?: string;
 }

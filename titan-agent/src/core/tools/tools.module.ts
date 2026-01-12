@@ -2,6 +2,7 @@ import { Module, OnModuleInit } from '@nestjs/common';
 import { ToolRegistry } from './tool.registry';
 import { ShellTool } from './shell.tool';
 import { FileReadTool, FileWriteTool, FileListTool } from './file.tools';
+import { BrowserTool } from './browser.tool';
 import { SandboxModule } from '../sandbox/sandbox.module';
 
 @Module({
@@ -12,6 +13,7 @@ import { SandboxModule } from '../sandbox/sandbox.module';
     FileReadTool,
     FileWriteTool,
     FileListTool,
+    BrowserTool,
   ],
   exports: [ToolRegistry],
 })
@@ -22,6 +24,7 @@ export class ToolsModule implements OnModuleInit {
     private fileReadTool: FileReadTool,
     private fileWriteTool: FileWriteTool,
     private fileListTool: FileListTool,
+    private browserTool: BrowserTool,
   ) {}
 
   onModuleInit() {
@@ -30,5 +33,6 @@ export class ToolsModule implements OnModuleInit {
     this.toolRegistry.register(this.fileReadTool);
     this.toolRegistry.register(this.fileWriteTool);
     this.toolRegistry.register(this.fileListTool);
+    this.toolRegistry.register(this.browserTool);
   }
 }

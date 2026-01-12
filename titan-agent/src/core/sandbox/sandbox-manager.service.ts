@@ -8,6 +8,7 @@ import {
   SandboxConfig,
   ShellResult,
   FileResult,
+  BrowserResult,
 } from './sandbox.interface';
 
 const execAsync = promisify(exec);
@@ -76,18 +77,33 @@ export class SandboxManagerService implements OnModuleDestroy {
         await this.buildImage();
       }
 
+      // Check if container already exists (from previous failed attempt)
+      const containerName = `sandbox-${sandboxId}`;
+      try {
+        const { stdout: existingContainer } = await execAsync(
+          `docker ps -a --filter "name=${containerName}" --format "{{.ID}}"`
+        );
+        if (existingContainer.trim()) {
+          this.logger.log(`Removing existing container: ${containerName}`);
+          await execAsync(`docker rm -f ${existingContainer.trim()}`);
+        }
+      } catch (cleanupError) {
+        // Ignore cleanup errors
+        this.logger.debug(`Container cleanup check: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+      }
+
       // Create container
       const createCommand = `docker run -d \
-        --name sandbox-${sandboxId} \
+        --name ${containerName} \
         --cpus="${cpuLimit}" \
         --memory="${memoryLimit}" \
         --network bridge \
         --cap-drop=ALL \
         --security-opt=no-new-privileges \
-        --read-only \
         --tmpfs /tmp:rw,noexec,nosuid,size=1g \
-        --tmpfs /work:rw,exec,size=2g \
+        --tmpfs /work:rw,exec,nosuid,size=2g,uid=1000,gid=1000,mode=1777 \
         -p 0:3001 \
+        -p 0:3002 \
         -p 0:3003 \
         ${this.imageName}`;
 
@@ -102,14 +118,15 @@ export class SandboxManagerService implements OnModuleDestroy {
       );
 
       const shellPort = this.extractPort(portsOutput, '3001');
+      const browserPort = this.extractPort(portsOutput, '3002');
       const filePort = this.extractPort(portsOutput, '3003');
 
-      if (!shellPort || !filePort) {
+      if (!shellPort || !browserPort || !filePort) {
         throw new Error('Failed to get mapped ports');
       }
 
       // Wait for services to be ready
-      await this.waitForServices(shellPort, filePort);
+      await this.waitForServices(shellPort, browserPort, filePort);
 
       const sandbox: Sandbox = {
         id: sandboxId,
@@ -118,6 +135,7 @@ export class SandboxManagerService implements OnModuleDestroy {
         createdAt: new Date(),
         ports: {
           shell: shellPort,
+          browser: browserPort,
           file: filePort,
         },
       };
@@ -132,7 +150,7 @@ export class SandboxManagerService implements OnModuleDestroy {
       }, timeout);
 
       this.logger.log(
-        `Sandbox ready: ${sandboxId} (shell:${shellPort}, file:${filePort})`,
+        `Sandbox ready: ${sandboxId} (shell:${shellPort}, browser:${browserPort}, file:${filePort})`,
       );
 
       return sandbox;
@@ -157,6 +175,7 @@ export class SandboxManagerService implements OnModuleDestroy {
    */
   private async waitForServices(
     shellPort: number,
+    browserPort: number,
     filePort: number,
     maxRetries = 30,
   ): Promise<void> {
@@ -165,6 +184,7 @@ export class SandboxManagerService implements OnModuleDestroy {
     for (let i = 0; i < maxRetries; i++) {
       try {
         await execAsync(`curl -s http://localhost:${shellPort}/health`);
+        await execAsync(`curl -s http://localhost:${browserPort}/health`);
         await execAsync(`curl -s http://localhost:${filePort}/health`);
         this.logger.debug('Sandbox services are ready');
         return;
@@ -299,6 +319,57 @@ export class SandboxManagerService implements OnModuleDestroy {
       return {
         success: false,
         error: errorMessage,
+      };
+    }
+  }
+
+  /**
+   * Execute browser action in sandbox
+   */
+  async executeBrowser(
+    sandboxId: string,
+    action: string,
+    options: {
+      url: string;
+      selector?: string;
+      instructions?: Record<string, string>;
+      timeout?: number;
+    }
+  ): Promise<BrowserResult> {
+    const sandbox = this.sandboxes.get(sandboxId);
+    if (!sandbox) {
+      throw new Error(`Sandbox not found: ${sandboxId}`);
+    }
+
+    const url = `http://localhost:${sandbox.ports.browser}/execute`;
+
+    try {
+      const payload = JSON.stringify({ action, ...options });
+      const { stdout } = await execAsync(
+        `curl -s -X POST ${url} -H "Content-Type: application/json" -d '${payload.replace(/'/g, "'\\''")}'`,
+        { timeout: (options.timeout || 15000) + 5000, maxBuffer: 10 * 1024 * 1024 }
+      );
+
+      const result = JSON.parse(stdout);
+
+      if (!result.success) {
+        return {
+          success: false,
+          error: result.error || 'Browser action failed'
+        };
+      }
+
+      return {
+        success: true,
+        data: result,
+        screenshot: result.screenshot
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Browser execution failed: ${errorMessage}`);
+      return {
+        success: false,
+        error: errorMessage
       };
     }
   }

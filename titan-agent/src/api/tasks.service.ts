@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, forwardRef, Inject } from '@nestjs/common';
 import { DatabaseService } from '../infrastructure/database/database.service';
 import {
   CreateTaskDto,
@@ -8,12 +8,17 @@ import {
   Artifact,
 } from '../models/task.model';
 import { v4 as uuidv4 } from 'uuid';
+import { TasksGateway } from './tasks.gateway';
 
 type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 @Injectable()
 export class TasksService {
-  constructor(private db: DatabaseService) {}
+  constructor(
+    private db: DatabaseService,
+    @Inject(forwardRef(() => TasksGateway))
+    private gateway: TasksGateway,
+  ) {}
 
   /**
    * Create a new task
@@ -191,6 +196,11 @@ export class TasksService {
       `UPDATE tasks SET events = ARRAY[${eventsJson.map((_, i) => `$${i + 2}::jsonb`).join(', ')}] WHERE id = $1`,
       [taskId, ...eventsJson],
     );
+
+    // Broadcast event via WebSocket
+    if (this.gateway) {
+      this.gateway.broadcastTaskEvent(taskId, { type, data });
+    }
   }
 
   /**

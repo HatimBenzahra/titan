@@ -1,4 +1,5 @@
-import { TaskStatus } from '@prisma/client';
+// Task status type
+export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 // Step interface for task execution plan
 export interface Step {
@@ -11,6 +12,7 @@ export interface Step {
   status: 'pending' | 'running' | 'completed' | 'failed';
   result?: any;
   error?: string;
+  required?: boolean; // If true, task stops on failure; defaults to true
 }
 
 // Task event types for execution history

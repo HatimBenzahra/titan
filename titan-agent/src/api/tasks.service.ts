@@ -185,9 +185,11 @@ export class TasksService {
 
     const events = [...(taskResult.rows[0].events || []), event];
 
+    // Convert events array to PostgreSQL array of JSONB
+    const eventsJson = events.map(e => JSON.stringify(e));
     await this.db.query(
-      `UPDATE tasks SET events = $1 WHERE id = $2`,
-      [JSON.stringify(events), taskId],
+      `UPDATE tasks SET events = ARRAY[${eventsJson.map((_, i) => `$${i + 2}::jsonb`).join(', ')}] WHERE id = $1`,
+      [taskId, ...eventsJson],
     );
   }
 
@@ -206,9 +208,11 @@ export class TasksService {
 
     const artifacts = [...(taskResult.rows[0].artifacts || []), artifact];
 
+    // Convert artifacts array to PostgreSQL array of JSONB
+    const artifactsJson = artifacts.map(a => JSON.stringify(a));
     await this.db.query(
-      `UPDATE tasks SET artifacts = $1 WHERE id = $2`,
-      [JSON.stringify(artifacts), taskId],
+      `UPDATE tasks SET artifacts = ARRAY[${artifactsJson.map((_, i) => `$${i + 2}::jsonb`).join(', ')}] WHERE id = $1`,
+      [taskId, ...artifactsJson],
     );
   }
 

@@ -2,24 +2,20 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Step } from '../../models/task.model';
 import { ToolRegistry } from '../tools/tool.registry';
-import Anthropic from '@anthropic-ai/sdk';
 
 @Injectable()
 export class PlannerAgent {
   private readonly logger = new Logger(PlannerAgent.name);
-  private anthropic: Anthropic;
+  private ollamaUrl: string;
+  private model: string;
 
   constructor(
     private configService: ConfigService,
     private toolRegistry: ToolRegistry,
   ) {
-    const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
-    if (!apiKey || apiKey === 'sk-ant-your-anthropic-key') {
-      this.logger.warn(
-        'ANTHROPIC_API_KEY not configured. PlannerAgent will not work properly.',
-      );
-    }
-    this.anthropic = new Anthropic({ apiKey });
+    this.ollamaUrl = this.configService.get<string>('OLLAMA_URL') || 'http://100.68.221.26:11434';
+    this.model = this.configService.get<string>('MODEL_PLANNER') || 'mistral:latest';
+    this.logger.log(`Using Ollama at ${this.ollamaUrl} with model ${this.model}`);
   }
 
   /**
@@ -51,7 +47,7 @@ Guidelines:
 7. Keep the plan simple and direct
 
 Output Format:
-Return a valid JSON array of steps. Each step must have:
+Return ONLY a valid JSON array of steps. Each step must have:
 - id: unique identifier (e.g., "step-1", "step-2")
 - tool: name of the tool to use
 - description: human-readable description of what this step does
@@ -82,33 +78,42 @@ Example:
     "successCriteria": "Script executes without errors and prints output",
     "required": true
   }
-]`;
+]
+
+Return ONLY the JSON array, no other text.`;
 
     const userPrompt = context
       ? `Goal: ${goal}\n\nContext: ${JSON.stringify(context, null, 2)}\n\nGenerate a plan to accomplish this goal.`
       : `Goal: ${goal}\n\nGenerate a plan to accomplish this goal.`;
 
     try {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 4096,
-        temperature: 0.7,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: userPrompt,
+      const response = await fetch(`${this.ollamaUrl}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.model,
+          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          stream: false,
+          options: {
+            temperature: 0.7,
+            num_predict: 2048,
           },
-        ],
+        }),
       });
 
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Expected text response from Claude');
+      if (!response.ok) {
+        throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`);
       }
 
+      const data = await response.json();
+      const responseText = data.response.trim();
+
+      this.logger.log(`LLM Raw Response: ${responseText.substring(0, 500)}`);
+
       // Extract JSON from response (handle markdown code blocks)
-      let jsonText = content.text.trim();
+      let jsonText = responseText;
       if (jsonText.startsWith('```json')) {
         jsonText = jsonText
           .replace(/^```json\n/, '')
@@ -121,12 +126,17 @@ Example:
           .trim();
       }
 
-      const plan = JSON.parse(jsonText) as Step[];
+      this.logger.log(`Extracted JSON: ${jsonText.substring(0, 500)}`);
 
-      // Validate plan structure
+      let plan = JSON.parse(jsonText);
+
+      // If Ollama returns a single object instead of an array, wrap it
       if (!Array.isArray(plan)) {
-        throw new Error('Plan must be an array');
+        this.logger.log('LLM returned single object, wrapping in array');
+        plan = [plan];
       }
+
+      plan = plan as Step[];
 
       for (const step of plan) {
         if (!step.id || !step.tool || !step.description || !step.arguments) {

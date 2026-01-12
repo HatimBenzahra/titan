@@ -1,0 +1,49 @@
+# Titan Agent Sandbox Container
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    git \
+    build-essential \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for agent execution
+RUN useradd -m -s /bin/bash agent
+
+# Create working directory
+RUN mkdir -p /work && chown agent:agent /work
+
+# Create app directory for servers
+RUN mkdir -p /app/servers && chown agent:agent /app/servers
+
+# Copy server files
+COPY --chown=agent:agent sandbox-servers/shell-server.js /app/servers/
+COPY --chown=agent:agent sandbox-servers/file-server.js /app/servers/
+COPY --chown=agent:agent sandbox-servers/package.json /app/servers/
+
+# Install Node.js dependencies for servers
+WORKDIR /app/servers
+RUN npm install
+
+# Switch to non-root user
+USER agent
+
+# Set working directory for agent operations
+WORKDIR /work
+
+# Expose ports for services
+# 3001: Shell server
+# 3003: File server
+EXPOSE 3001 3003
+
+# Start both servers using a simple process manager
+CMD ["sh", "-c", "node /app/servers/shell-server.js & node /app/servers/file-server.js & wait"]

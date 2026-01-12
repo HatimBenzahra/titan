@@ -1,0 +1,61 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model for authentication and multi-tenancy
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  apiKey       String   @unique
+  role         String   @default("user")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tasks        Task[]
+
+  @@map("users")
+}
+
+// Task model - Core entity for agent execution
+model Task {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  goal        String    @db.Text
+  status      TaskStatus @default(queued)
+  context     Json?
+  plan        Json?
+  events      Json[]
+  artifacts   Json[]
+
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  metadata    Json?
+
+  @@map("tasks")
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum TaskStatus {
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
